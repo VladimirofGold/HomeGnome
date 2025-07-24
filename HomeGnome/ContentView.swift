@@ -7,120 +7,312 @@
 
 import SwiftUI
 
-// Модель данных для услуги
-struct HomeService: Identifiable {
-    let id = UUID()
+// Модель данных для объявления
+struct Task: Identifiable, Codable {
+    var id = UUID()
+    let role: Role
     let title: String
     let description: String
-    let priceRange: String
-    let imageName: String
+    let price: String
+    let date: Date
 }
 
-// Основной экран со списком услуг
-struct ServicesListView: View {
-    let services = [
-        HomeService(title: "Стрижка газона",
-                    description: "Профессиональная стрижка газона с уборкой",
-                    priceRange: "500-1500 ₽",
-                    imageName: "leaf"),
-        HomeService(title: "Уборка",
-                    description: "Генеральная уборка квартиры или дома",
-                    priceRange: "1500-5000 ₽",
-                    imageName: "house"),
-        HomeService(title: "Ремонт",
-                    description: "Мелкий бытовой ремонт",
-                    priceRange: "1000-10000 ₽",
-                    imageName: "wrench"),
-        HomeService(title: "Химчистка",
-                    description: "Химчистка мебели и ковров",
-                    priceRange: "2000-8000 ₽",
-                    imageName: "washer")
-    ]
+// Роли пользователя
+enum Role: String, Codable {
+    case customer = "Заказчик"
+    case performer = "Исполнитель"
+}
+
+// Главный экран приложения
+struct ContentView: View {
+    // Цвета
+    private let primaryColor = Color(red: 74/255, green: 120/255, blue: 101/255)
+    private let backgroundColor = Color(red: 245/255, green: 245/255, blue: 245/255)
+    
+    // Состояние приложения
+    @State private var tasks: [Task] = []
+    @State private var showRoleSelection = true
+    @State private var showTaskCreation = false
+    @State private var selectedRole: Role?
+    @State private var newTaskTitle = ""
+    @State private var newTaskDescription = ""
+    @State private var newTaskPrice = ""
+    
+    // Настройка NavigationBar
+    init() {
+        let appearance = UINavigationBarAppearance()
+        appearance.configureWithOpaqueBackground()
+        appearance.backgroundColor = UIColor(primaryColor)
+        appearance.titleTextAttributes = [.foregroundColor: UIColor.white]
+        appearance.largeTitleTextAttributes = [.foregroundColor: UIColor.white]
+        
+        UINavigationBar.appearance().standardAppearance = appearance
+        UINavigationBar.appearance().scrollEdgeAppearance = appearance
+        UINavigationBar.appearance().tintColor = .white
+        
+        // Загрузка сохраненных задач при инициализации
+        if let savedTasks = UserDefaults.standard.data(forKey: "savedTasks") {
+            if let decodedTasks = try? JSONDecoder().decode([Task].self, from: savedTasks) {
+                _tasks = State(initialValue: decodedTasks)
+            }
+        }
+    }
     
     var body: some View {
         NavigationView {
-            List(services) { service in
-                NavigationLink(destination: ServiceDetailView(service: service)) {
-                    ServiceRow(service: service)
+            ZStack {
+                backgroundColor.edgesIgnoringSafeArea(.all)
+                
+                if showRoleSelection {
+                    RoleSelectionView(primaryColor: primaryColor, selectedRole: $selectedRole) {
+                        withAnimation {
+                            showRoleSelection = false
+                        }
+                    }
+                } else {
+                    MainContentView(
+                        tasks: $tasks,
+                        selectedRole: $selectedRole,
+                        showTaskCreation: $showTaskCreation,
+                        primaryColor: primaryColor,
+                        backgroundColor: backgroundColor,
+                        onAddTask: saveTasks
+                    )
                 }
             }
-            .navigationTitle("HomeGnome")
+            .navigationTitle(selectedRole == nil ? "HomeGnome" : selectedRole!.rawValue)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItemGroup(placement: .navigationBarTrailing) {
+                    if selectedRole != nil {
+                        Button(action: {
+                            showTaskCreation = true
+                        }) {
+                            Image(systemName: "plus")
+                                .foregroundColor(.white)
+                        }
+                    }
+                }
+            }
+            .sheet(isPresented: $showTaskCreation) {
+                if let role = selectedRole {
+                    NewTaskView(
+                        role: role,
+                        isPresented: $showTaskCreation,
+                        tasks: $tasks,
+                        primaryColor: primaryColor,
+                        onAddTask: saveTasks
+                    )
+                }
+            }
+        }
+        .accentColor(.white)
+    }
+    
+    // Сохранение задач
+    private func saveTasks() {
+        if let encoded = try? JSONEncoder().encode(tasks) {
+            UserDefaults.standard.set(encoded, forKey: "savedTasks")
         }
     }
 }
 
-// Строка услуги в списке
-struct ServiceRow: View {
-    let service: HomeService
+// Экран выбора роли
+struct RoleSelectionView: View {
+    let primaryColor: Color
+    @Binding var selectedRole: Role?
+    let onRoleSelected: () -> Void
     
     var body: some View {
-        HStack {
-            Image(systemName: service.imageName)
-                .resizable()
-                .frame(width: 40, height: 40)
-                .foregroundColor(.green)
+        VStack(spacing: 20) {
+            Text("Выберите роль")
+                .font(.title2)
+                .padding(.bottom, 30)
             
-            VStack(alignment: .leading) {
-                Text(service.title)
+            RoleButton(
+                role: .customer,
+                title: "Я заказчик",
+                description: "Нужно выполнить работу",
+                primaryColor: primaryColor,
+                selectedRole: $selectedRole,
+                onRoleSelected: onRoleSelected
+            )
+            
+            RoleButton(
+                role: .performer,
+                title: "Я исполнитель",
+                description: "Могу выполнить работу",
+                primaryColor: primaryColor,
+                selectedRole: $selectedRole,
+                onRoleSelected: onRoleSelected
+            )
+        }
+        .padding()
+    }
+}
+
+// Кнопка выбора роли
+struct RoleButton: View {
+    let role: Role
+    let title: String
+    let description: String
+    let primaryColor: Color
+    @Binding var selectedRole: Role?
+    let onRoleSelected: () -> Void
+    
+    var body: some View {
+        Button(action: {
+            selectedRole = role
+            onRoleSelected()
+        }) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(title)
                     .font(.headline)
-                Text(service.priceRange)
+                    .foregroundColor(primaryColor)
+                
+                Text(description)
                     .font(.subheadline)
                     .foregroundColor(.gray)
             }
-            .padding(.leading, 8)
+            .padding()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.white)
+            .cornerRadius(12)
+            .shadow(color: Color.black.opacity(0.05), radius: 4, x: 0, y: 2)
         }
-        .padding(.vertical, 8)
     }
 }
 
-// Экран деталей услуги
-struct ServiceDetailView: View {
-    let service: HomeService
+// Главный контент после выбора роли
+struct MainContentView: View {
+    @Binding var tasks: [Task]
+    @Binding var selectedRole: Role?
+    @Binding var showTaskCreation: Bool
+    let primaryColor: Color
+    let backgroundColor: Color
+    let onAddTask: () -> Void
+    
+    var filteredTasks: [Task] {
+        tasks.filter { $0.role == selectedRole }
+    }
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Image(systemName: service.imageName)
-                .resizable()
-                .scaledToFit()
-                .frame(height: 150)
-                .foregroundColor(.green)
-                .frame(maxWidth: .infinity)
-            
-            Text(service.title)
-                .font(.title)
-                .bold()
-            
-            Text(service.description)
-                .font(.body)
-            
-            Text("Ценовой диапазон: \(service.priceRange)")
-                .font(.headline)
-                .padding(.top, 8)
-            
-            Spacer()
-            
-            Button(action: {
-                // Действие при нажатии
-                print("Выбрана услуга: \(service.title)")
-            }) {
-                Text("Выбрать")
-                    .frame(maxWidth: .infinity)
-                    .padding()
-                    .background(Color.green)
-                    .foregroundColor(.white)
-                    .cornerRadius(10)
+        ScrollView {
+            VStack(spacing: 16) {
+                if filteredTasks.isEmpty {
+                    Text(selectedRole == .customer ?
+                         "Нет созданных заказов" : "Нет предложений услуг")
+                        .foregroundColor(.gray)
+                        .padding()
+                } else {
+                    ForEach(filteredTasks) { task in
+                        TaskRow(task: task, primaryColor: primaryColor)
+                    }
+                }
             }
+            .padding()
+        }
+    }
+}
+
+// Строка задачи
+struct TaskRow: View {
+    let task: Task
+    let primaryColor: Color
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(task.title)
+                    .font(.headline)
+                    .foregroundColor(Color(red: 51/255, green: 51/255, blue: 51/255))
+                
+                Spacer()
+                
+                Text(task.price)
+                    .font(.subheadline)
+                    .foregroundColor(primaryColor)
+            }
+            
+            Text(task.description)
+                .font(.subheadline)
+                .foregroundColor(Color(red: 102/255, green: 102/255, blue: 102/255))
+            
+            Text("Добавлено: \(task.date.formatted(date: .numeric, time: .shortened))")
+                .font(.caption)
+                .foregroundColor(.gray)
         }
         .padding()
-        .navigationTitle(service.title)
-        .navigationBarTitleDisplayMode(.inline)
+        .background(Color.white)
+        .cornerRadius(12)
+        .shadow(color: Color.black.opacity(0.05), radius: 4, x: 0, y: 2)
+    }
+}
+
+// Экран создания новой задачи
+struct NewTaskView: View {
+    let role: Role
+    @Binding var isPresented: Bool
+    @Binding var tasks: [Task]
+    let primaryColor: Color
+    let onAddTask: () -> Void
+    
+    @State private var title = ""
+    @State private var description = ""
+    @State private var price = ""
+    
+    var body: some View {
+        NavigationView {
+            Form {
+                Section {
+                    TextField(role == .customer ? "Какая работа нужна?" : "Какую работу предлагаете?", text: $title)
+                    TextField("Подробное описание", text: $description)
+                    TextField("Бюджет", text: $price)
+                        .keyboardType(.numberPad)
+                }
+                
+                Section {
+                    Button(action: addTask) {
+                        HStack {
+                            Spacer()
+                            Text("Добавить")
+                            Spacer()
+                        }
+                    }
+                    .disabled(title.isEmpty || price.isEmpty)
+                }
+            }
+            .navigationTitle("Новое объявление")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Готово") {
+                        isPresented = false
+                    }
+                }
+            }
+        }
+        .accentColor(primaryColor)
+    }
+    
+    private func addTask() {
+        let newTask = Task(
+            role: role,
+            title: title,
+            description: description,
+            price: price + " ₽",
+            date: Date()
+        )
+        tasks.append(newTask)
+        onAddTask()
+        isPresented = false
     }
 }
 
 // Предварительный просмотр
-struct ServicesListView_Previews: PreviewProvider {
+struct ContentView_Previews: PreviewProvider {
     static var previews: some View {
-        ServicesListView()
+        ContentView()
     }
 }
 
@@ -129,7 +321,7 @@ struct ServicesListView_Previews: PreviewProvider {
 struct HomeGnomeApp: App {
     var body: some Scene {
         WindowGroup {
-            ServicesListView()
+            ContentView()
         }
-
-    }}
+    }
+}
