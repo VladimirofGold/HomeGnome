@@ -4,7 +4,6 @@
 //
 //  Created by Vladimir on 23.07.2025.
 //
-
 import SwiftUI
 
 // Модель данных для объявления
@@ -14,6 +13,7 @@ struct Task: Identifiable, Codable {
     let title: String
     let description: String
     let price: String
+    let phone: String
     let date: Date
 }
 
@@ -34,9 +34,6 @@ struct ContentView: View {
     @State private var showRoleSelection = true
     @State private var showTaskCreation = false
     @State private var selectedRole: Role?
-    @State private var newTaskTitle = ""
-    @State private var newTaskDescription = ""
-    @State private var newTaskPrice = ""
     
     // Настройка NavigationBar
     init() {
@@ -50,7 +47,7 @@ struct ContentView: View {
         UINavigationBar.appearance().scrollEdgeAppearance = appearance
         UINavigationBar.appearance().tintColor = .white
         
-        // Загрузка сохраненных задач при инициализации
+        // Загрузка сохраненных задач
         if let savedTasks = UserDefaults.standard.data(forKey: "savedTasks") {
             if let decodedTasks = try? JSONDecoder().decode([Task].self, from: savedTasks) {
                 _tasks = State(initialValue: decodedTasks)
@@ -83,7 +80,8 @@ struct ContentView: View {
             .navigationTitle(selectedRole == nil ? "HomeGnome" : selectedRole!.rawValue)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItemGroup(placement: .navigationBarTrailing) {
+                // Кнопка добавления (справа)
+                ToolbarItem(placement: .navigationBarTrailing) {
                     if selectedRole != nil {
                         Button(action: {
                             showTaskCreation = true
@@ -93,17 +91,27 @@ struct ContentView: View {
                         }
                     }
                 }
-            }
-            .sheet(isPresented: $showTaskCreation) {
-                if let role = selectedRole {
-                    NewTaskView(
-                        role: role,
-                        isPresented: $showTaskCreation,
-                        tasks: $tasks,
-                        primaryColor: primaryColor,
-                        onAddTask: saveTasks
-                    )
+                
+                // Кнопка смены роли (слева)
+                ToolbarItem(placement: .navigationBarLeading) {
+                    if selectedRole != nil {
+                        Button("Сменить роль") {
+                            showRoleSelection = true
+                        }
+                        .foregroundColor(.white)
+                    }
                 }
+            }
+        }
+        .sheet(isPresented: $showTaskCreation) {
+            if let role = selectedRole {
+                NewTaskView(
+                    role: role,
+                    isPresented: $showTaskCreation,
+                    tasks: $tasks,
+                    primaryColor: primaryColor,
+                    onAddTask: saveTasks
+                )
             }
         }
         .accentColor(.white)
@@ -192,21 +200,16 @@ struct MainContentView: View {
     let backgroundColor: Color
     let onAddTask: () -> Void
     
-    var filteredTasks: [Task] {
-        tasks.filter { $0.role == selectedRole }
-    }
-    
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
-                if filteredTasks.isEmpty {
-                    Text(selectedRole == .customer ?
-                         "Нет созданных заказов" : "Нет предложений услуг")
+                if tasks.isEmpty {
+                    Text("Нет объявлений")
                         .foregroundColor(.gray)
                         .padding()
                 } else {
-                    ForEach(filteredTasks) { task in
-                        TaskRow(task: task, primaryColor: primaryColor)
+                    ForEach(tasks) { task in
+                        TaskRow(task: task, primaryColor: primaryColor, currentRole: selectedRole)
                     }
                 }
             }
@@ -219,6 +222,7 @@ struct MainContentView: View {
 struct TaskRow: View {
     let task: Task
     let primaryColor: Color
+    let currentRole: Role?
     
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -237,6 +241,18 @@ struct TaskRow: View {
             Text(task.description)
                 .font(.subheadline)
                 .foregroundColor(Color(red: 102/255, green: 102/255, blue: 102/255))
+            
+            HStack {
+                Text("Тип: \(task.role.rawValue)")
+                    .font(.caption)
+                    .foregroundColor(task.role == .customer ? .blue : .green)
+                
+                Spacer()
+                
+                Text("Телефон: \(task.phone)")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+            }
             
             Text("Добавлено: \(task.date.formatted(date: .numeric, time: .shortened))")
                 .font(.caption)
@@ -260,6 +276,7 @@ struct NewTaskView: View {
     @State private var title = ""
     @State private var description = ""
     @State private var price = ""
+    @State private var phone = ""
     
     var body: some View {
         NavigationView {
@@ -269,6 +286,8 @@ struct NewTaskView: View {
                     TextField("Подробное описание", text: $description)
                     TextField("Бюджет", text: $price)
                         .keyboardType(.numberPad)
+                    TextField("Контактный телефон", text: $phone)
+                        .keyboardType(.phonePad)
                 }
                 
                 Section {
@@ -279,7 +298,7 @@ struct NewTaskView: View {
                             Spacer()
                         }
                     }
-                    .disabled(title.isEmpty || price.isEmpty)
+                    .disabled(title.isEmpty || price.isEmpty || phone.isEmpty)
                 }
             }
             .navigationTitle("Новое объявление")
@@ -301,11 +320,18 @@ struct NewTaskView: View {
             title: title,
             description: description,
             price: price + " ₽",
+            phone: phone,
             date: Date()
         )
         tasks.append(newTask)
         onAddTask()
         isPresented = false
+        
+        // Сброс полей после добавления
+        title = ""
+        description = ""
+        price = ""
+        phone = ""
     }
 }
 
