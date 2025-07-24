@@ -15,12 +15,24 @@ struct Task: Identifiable, Codable {
     let price: String
     let phone: String
     let date: Date
+    
+    var numericPrice: Int {
+        Int(price.filter { $0.isNumber }) ?? 0
+    }
 }
 
 // Роли пользователя
 enum Role: String, Codable {
     case customer = "Заказчик"
     case performer = "Исполнитель"
+}
+
+// Модель фильтров
+struct TaskFilters {
+    var showCustomers: Bool = true
+    var showPerformers: Bool = true
+    var minPrice: String = ""
+    var maxPrice: String = ""
 }
 
 // Главный экран приложения
@@ -34,6 +46,8 @@ struct ContentView: View {
     @State private var showRoleSelection = true
     @State private var showTaskCreation = false
     @State private var selectedRole: Role?
+    @State private var showingFilters = false
+    @State private var filters = TaskFilters()
     
     // Настройка NavigationBar
     init() {
@@ -55,6 +69,28 @@ struct ContentView: View {
         }
     }
     
+    // Фильтрованные задачи
+    var filteredTasks: [Task] {
+        tasks.filter { task in
+            // Фильтр по типу
+            let roleFilter = (task.role == .customer && filters.showCustomers) ||
+                            (task.role == .performer && filters.showPerformers)
+            
+            // Фильтр по цене
+            var priceFilter = true
+            if !filters.minPrice.isEmpty {
+                let minPrice = Int(filters.minPrice) ?? 0
+                priceFilter = task.numericPrice >= minPrice
+            }
+            if !filters.maxPrice.isEmpty {
+                let maxPrice = Int(filters.maxPrice) ?? Int.max
+                priceFilter = priceFilter && (task.numericPrice <= maxPrice)
+            }
+            
+            return roleFilter && priceFilter
+        }
+    }
+    
     var body: some View {
         NavigationView {
             ZStack {
@@ -67,20 +103,38 @@ struct ContentView: View {
                         }
                     }
                 } else {
-                    MainContentView(
-                        tasks: $tasks,
-                        selectedRole: $selectedRole,
-                        showTaskCreation: $showTaskCreation,
-                        primaryColor: primaryColor,
-                        backgroundColor: backgroundColor,
-                        onAddTask: saveTasks
-                    )
+                    VStack {
+                        // Кнопка фильтров
+                        HStack {
+                            Spacer()
+                            Button(action: { showingFilters = true }) {
+                                Image(systemName: "slider.horizontal.3")
+                                    .foregroundColor(primaryColor)
+                            }
+                            .padding(.trailing)
+                        }
+                        
+                        // Список задач
+                        ScrollView {
+                            VStack(spacing: 16) {
+                                if filteredTasks.isEmpty {
+                                    Text("Нет подходящих объявлений")
+                                        .foregroundColor(.gray)
+                                        .padding()
+                                } else {
+                                    ForEach(filteredTasks) { task in
+                                        TaskRow(task: task, primaryColor: primaryColor)
+                                    }
+                                }
+                            }
+                            .padding()
+                        }
+                    }
                 }
             }
             .navigationTitle(selectedRole == nil ? "HomeGnome" : selectedRole!.rawValue)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                // Кнопка добавления (справа)
                 ToolbarItem(placement: .navigationBarTrailing) {
                     if selectedRole != nil {
                         Button(action: {
@@ -91,8 +145,6 @@ struct ContentView: View {
                         }
                     }
                 }
-                
-                // Кнопка смены роли (слева)
                 ToolbarItem(placement: .navigationBarLeading) {
                     if selectedRole != nil {
                         Button("Сменить роль") {
@@ -102,16 +154,19 @@ struct ContentView: View {
                     }
                 }
             }
-        }
-        .sheet(isPresented: $showTaskCreation) {
-            if let role = selectedRole {
-                NewTaskView(
-                    role: role,
-                    isPresented: $showTaskCreation,
-                    tasks: $tasks,
-                    primaryColor: primaryColor,
-                    onAddTask: saveTasks
-                )
+            .sheet(isPresented: $showTaskCreation) {
+                if let role = selectedRole {
+                    NewTaskView(
+                        role: role,
+                        isPresented: $showTaskCreation,
+                        tasks: $tasks,
+                        primaryColor: primaryColor,
+                        onAddTask: saveTasks
+                    )
+                }
+            }
+            .sheet(isPresented: $showingFilters) {
+                FiltersView(filters: $filters, primaryColor: primaryColor)
             }
         }
         .accentColor(.white)
@@ -191,38 +246,10 @@ struct RoleButton: View {
     }
 }
 
-// Главный контент после выбора роли
-struct MainContentView: View {
-    @Binding var tasks: [Task]
-    @Binding var selectedRole: Role?
-    @Binding var showTaskCreation: Bool
-    let primaryColor: Color
-    let backgroundColor: Color
-    let onAddTask: () -> Void
-    
-    var body: some View {
-        ScrollView {
-            VStack(spacing: 16) {
-                if tasks.isEmpty {
-                    Text("Нет объявлений")
-                        .foregroundColor(.gray)
-                        .padding()
-                } else {
-                    ForEach(tasks) { task in
-                        TaskRow(task: task, primaryColor: primaryColor, currentRole: selectedRole)
-                    }
-                }
-            }
-            .padding()
-        }
-    }
-}
-
 // Строка задачи
 struct TaskRow: View {
     let task: Task
     let primaryColor: Color
-    let currentRole: Role?
     
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -233,7 +260,7 @@ struct TaskRow: View {
                 
                 Spacer()
                 
-                Text(task.price)
+                Text("\(task.numericPrice) ₽")
                     .font(.subheadline)
                     .foregroundColor(primaryColor)
             }
@@ -284,7 +311,7 @@ struct NewTaskView: View {
                 Section {
                     TextField(role == .customer ? "Какая работа нужна?" : "Какую работу предлагаете?", text: $title)
                     TextField("Подробное описание", text: $description)
-                    TextField("Бюджет", text: $price)
+                    TextField("Бюджет (только цифры)", text: $price)
                         .keyboardType(.numberPad)
                     TextField("Контактный телефон", text: $phone)
                         .keyboardType(.phonePad)
@@ -319,7 +346,7 @@ struct NewTaskView: View {
             role: role,
             title: title,
             description: description,
-            price: price + " ₽",
+            price: "\(price) ₽",
             phone: phone,
             date: Date()
         )
@@ -332,6 +359,40 @@ struct NewTaskView: View {
         description = ""
         price = ""
         phone = ""
+    }
+}
+
+// Экран фильтров
+struct FiltersView: View {
+    @Binding var filters: TaskFilters
+    let primaryColor: Color
+    
+    var body: some View {
+        NavigationView {
+            Form {
+                Section(header: Text("Тип объявления")) {
+                    Toggle("Показывать заказы", isOn: $filters.showCustomers)
+                    Toggle("Показывать услуги", isOn: $filters.showPerformers)
+                }
+                
+                Section(header: Text("Цена (₽)")) {
+                    TextField("Минимальная цена", text: $filters.minPrice)
+                        .keyboardType(.numberPad)
+                    TextField("Максимальная цена", text: $filters.maxPrice)
+                        .keyboardType(.numberPad)
+                }
+            }
+            .navigationTitle("Фильтры")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Готово") {
+                        // Закрываем окно
+                    }
+                }
+            }
+        }
+        .accentColor(primaryColor)
     }
 }
 
