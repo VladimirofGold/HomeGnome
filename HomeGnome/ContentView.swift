@@ -6,7 +6,7 @@
 //
 import SwiftUI
 
-// Модель данных для объявления
+// Модели данных
 struct Task: Identifiable, Codable {
     var id = UUID()
     let role: Role
@@ -21,13 +21,20 @@ struct Task: Identifiable, Codable {
     }
 }
 
-// Роли пользователя
-enum Role: String, Codable {
+enum Role: String, Codable, CaseIterable {
     case customer = "Заказчик"
     case performer = "Исполнитель"
 }
 
-// Модель фильтров
+struct User: Codable {
+    var id = UUID()
+    var name: String
+    var email: String
+    var phone: String
+    var role: Role
+    var completedTasks: Int = 0
+}
+
 struct TaskFilters {
     var showCustomers: Bool = true
     var showPerformers: Bool = true
@@ -35,22 +42,34 @@ struct TaskFilters {
     var maxPrice: String = ""
 }
 
-// Главный экран приложения
+// Главный View
 struct ContentView: View {
+    // Состояние приложения
+    @State private var tasks: [Task] = []
+    @State private var showTaskCreation = false
+    @State private var showingFilters = false
+    @State private var filters = TaskFilters()
+    @State private var currentUser: User?
+    @State private var showingAuth = false
+    @State private var showRoleSelection = true
+    @State private var selectedRole: Role?
+    
     // Цвета
     private let primaryColor = Color(red: 74/255, green: 120/255, blue: 101/255)
     private let backgroundColor = Color(red: 245/255, green: 245/255, blue: 245/255)
     
-    // Состояние приложения
-    @State private var tasks: [Task] = []
-    @State private var showRoleSelection = true
-    @State private var showTaskCreation = false
-    @State private var selectedRole: Role?
-    @State private var showingFilters = false
-    @State private var filters = TaskFilters()
-    
-    // Настройка NavigationBar
     init() {
+        // Загрузка пользователя
+        if let userData = UserDefaults.standard.data(forKey: "currentUser") {
+            currentUser = try? JSONDecoder().decode(User.self, from: userData)
+        }
+        
+        // Загрузка задач
+        if let tasksData = UserDefaults.standard.data(forKey: "tasks") {
+            tasks = (try? JSONDecoder().decode([Task].self, from: tasksData)) ?? []
+        }
+        
+        // Настройка NavigationBar
         let appearance = UINavigationBarAppearance()
         appearance.configureWithOpaqueBackground()
         appearance.backgroundColor = UIColor(primaryColor)
@@ -60,127 +79,297 @@ struct ContentView: View {
         UINavigationBar.appearance().standardAppearance = appearance
         UINavigationBar.appearance().scrollEdgeAppearance = appearance
         UINavigationBar.appearance().tintColor = .white
-        
-        // Загрузка сохраненных задач
-        if let savedTasks = UserDefaults.standard.data(forKey: "savedTasks") {
-            if let decodedTasks = try? JSONDecoder().decode([Task].self, from: savedTasks) {
-                _tasks = State(initialValue: decodedTasks)
-            }
-        }
-    }
-    
-    // Фильтрованные задачи
-    var filteredTasks: [Task] {
-        tasks.filter { task in
-            // Фильтр по типу
-            let roleFilter = (task.role == .customer && filters.showCustomers) ||
-                            (task.role == .performer && filters.showPerformers)
-            
-            // Фильтр по цене
-            var priceFilter = true
-            if !filters.minPrice.isEmpty {
-                let minPrice = Int(filters.minPrice) ?? 0
-                priceFilter = task.numericPrice >= minPrice
-            }
-            if !filters.maxPrice.isEmpty {
-                let maxPrice = Int(filters.maxPrice) ?? Int.max
-                priceFilter = priceFilter && (task.numericPrice <= maxPrice)
-            }
-            
-            return roleFilter && priceFilter
-        }
     }
     
     var body: some View {
-        NavigationView {
-            ZStack {
-                backgroundColor.edgesIgnoringSafeArea(.all)
-                
-                if showRoleSelection {
-                    RoleSelectionView(primaryColor: primaryColor, selectedRole: $selectedRole) {
-                        withAnimation {
-                            showRoleSelection = false
-                        }
-                    }
-                } else {
-                    VStack {
-                        // Кнопка фильтров
-                        HStack {
-                            Spacer()
-                            Button(action: { showingFilters = true }) {
-                                Image(systemName: "slider.horizontal.3")
-                                    .foregroundColor(primaryColor)
-                            }
-                            .padding(.trailing)
-                        }
+        Group {
+            if currentUser == nil {
+                AuthView(currentUser: $currentUser)
+            } else {
+                NavigationView {
+                    ZStack {
+                        backgroundColor.edgesIgnoringSafeArea(.all)
                         
-                        // Список задач
-                        ScrollView {
-                            VStack(spacing: 16) {
-                                if filteredTasks.isEmpty {
-                                    Text("Нет подходящих объявлений")
-                                        .foregroundColor(.gray)
-                                        .padding()
-                                } else {
-                                    ForEach(filteredTasks) { task in
-                                        TaskRow(task: task, primaryColor: primaryColor)
-                                    }
+                        if showRoleSelection {
+                            RoleSelectionView(primaryColor: primaryColor, selectedRole: $selectedRole) {
+                                withAnimation {
+                                    showRoleSelection = false
                                 }
                             }
-                            .padding()
+                        } else {
+                            VStack {
+                                // Кнопка профиля
+                                HStack {
+                                    Spacer()
+                                    Button(action: { showingAuth = true }) {
+                                        Image(systemName: "person.circle")
+                                            .font(.title)
+                                            .foregroundColor(primaryColor)
+                                    }
+                                    .padding(.trailing)
+                                }
+                                
+                                // Кнопка фильтров
+                                HStack {
+                                    Spacer()
+                                    Button(action: { showingFilters = true }) {
+                                        Image(systemName: "slider.horizontal.3")
+                                            .foregroundColor(primaryColor)
+                                    }
+                                    .padding(.trailing)
+                                }
+                                
+                                // Список задач
+                                ScrollView {
+                                    VStack(spacing: 16) {
+                                        if tasks.isEmpty {
+                                            Text("Нет объявлений")
+                                                .foregroundColor(.gray)
+                                                .padding()
+                                        } else {
+                                            ForEach(tasks) { task in
+                                                TaskRow(task: task, primaryColor: primaryColor)
+                                            }
+                                        }
+                                    }
+                                    .padding()
+                                }
+                            }
                         }
                     }
-                }
-            }
-            .navigationTitle(selectedRole == nil ? "HomeGnome" : selectedRole!.rawValue)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    if selectedRole != nil {
-                        Button(action: {
-                            showTaskCreation = true
-                        }) {
-                            Image(systemName: "plus")
+                    .navigationTitle(selectedRole == nil ? "HomeGnome" : selectedRole!.rawValue)
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .navigationBarTrailing) {
+                            if selectedRole != nil {
+                                Button(action: {
+                                    showTaskCreation = true
+                                }) {
+                                    Image(systemName: "plus")
+                                        .foregroundColor(.white)
+                                }
+                            }
+                        }
+                        ToolbarItem(placement: .navigationBarLeading) {
+                            if selectedRole != nil {
+                                Button("Сменить роль") {
+                                    showRoleSelection = true
+                                }
                                 .foregroundColor(.white)
+                            }
+                        }
+                    }
+                    .sheet(isPresented: $showTaskCreation) {
+                        if let role = selectedRole {
+                            NewTaskView(
+                                role: role,
+                                isPresented: $showTaskCreation,
+                                tasks: $tasks,
+                                primaryColor: primaryColor,
+                                onAddTask: saveTasks
+                            )
+                        }
+                    }
+                    .sheet(isPresented: $showingFilters) {
+                        FiltersView(filters: $filters, primaryColor: primaryColor)
+                    }
+                    .sheet(isPresented: $showingAuth) {
+                        if let user = currentUser {
+                            ProfileView(currentUser: $currentUser, user: user)
                         }
                     }
                 }
-                ToolbarItem(placement: .navigationBarLeading) {
-                    if selectedRole != nil {
-                        Button("Сменить роль") {
-                            showRoleSelection = true
-                        }
-                        .foregroundColor(.white)
-                    }
-                }
-            }
-            .sheet(isPresented: $showTaskCreation) {
-                if let role = selectedRole {
-                    NewTaskView(
-                        role: role,
-                        isPresented: $showTaskCreation,
-                        tasks: $tasks,
-                        primaryColor: primaryColor,
-                        onAddTask: saveTasks
-                    )
-                }
-            }
-            .sheet(isPresented: $showingFilters) {
-                FiltersView(filters: $filters, primaryColor: primaryColor)
+                .accentColor(.white)
             }
         }
-        .accentColor(.white)
     }
     
-    // Сохранение задач
     private func saveTasks() {
         if let encoded = try? JSONEncoder().encode(tasks) {
-            UserDefaults.standard.set(encoded, forKey: "savedTasks")
+            UserDefaults.standard.set(encoded, forKey: "tasks")
         }
     }
 }
 
-// Экран выбора роли
+// Компоненты аутентификации
+struct AuthView: View {
+    @Binding var currentUser: User?
+    @State private var isLoginMode = true
+    @State private var name = ""
+    @State private var email = ""
+    @State private var phone = ""
+    @State private var password = ""
+    @State private var selectedRole: Role = .customer
+    
+    var body: some View {
+        NavigationView {
+            Form {
+                if !isLoginMode {
+                    Section {
+                        TextField("Имя", text: $name)
+                        TextField("Телефон", text: $phone)
+                            .keyboardType(.phonePad)
+                        Picker("Роль", selection: $selectedRole) {
+                            ForEach(Role.allCases, id: \.self) { role in
+                                Text(role.rawValue).tag(role)
+                            }
+                        }
+                    }
+                }
+                
+                Section {
+                    TextField("Email", text: $email)
+                        .keyboardType(.emailAddress)
+                        .autocapitalization(.none)
+                    SecureField("Пароль", text: $password)
+                }
+                
+                Section {
+                    Button(isLoginMode ? "Войти" : "Зарегистрироваться") {
+                        let user = User(
+                            name: name,
+                            email: email,
+                            phone: phone,
+                            role: selectedRole
+                        )
+                        saveUser(user)
+                        currentUser = user
+                    }
+                    .disabled(!isFormValid)
+                    
+                    Button(isLoginMode ? "Создать аккаунт" : "Уже есть аккаунт? Войти") {
+                        isLoginMode.toggle()
+                    }
+                }
+            }
+            .navigationTitle(isLoginMode ? "Вход" : "Регистрация")
+        }
+    }
+    
+    private var isFormValid: Bool {
+        if isLoginMode {
+            return !email.isEmpty && !password.isEmpty
+        } else {
+            return !name.isEmpty && !email.isEmpty && !password.isEmpty && !phone.isEmpty
+        }
+    }
+    
+    private func saveUser(_ user: User) {
+        if let encoded = try? JSONEncoder().encode(user) {
+            UserDefaults.standard.set(encoded, forKey: "currentUser")
+        }
+    }
+}
+
+struct ProfileView: View {
+    @Binding var currentUser: User?
+    let user: User
+    @State private var showingEdit = false
+    
+    var body: some View {
+        NavigationView {
+            List {
+                Section {
+                    HStack {
+                        Image(systemName: "person.circle.fill")
+                            .font(.system(size: 60))
+                            .foregroundColor(.gray)
+                        
+                        VStack(alignment: .leading) {
+                            Text(user.name)
+                                .font(.title2)
+                            Text(user.role.rawValue)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+                
+                Section("Контакты") {
+                    HStack {
+                        Image(systemName: "envelope")
+                            .frame(width: 30)
+                        Text(user.email)
+                    }
+                    HStack {
+                        Image(systemName: "phone")
+                            .frame(width: 30)
+                        Text(user.phone)
+                    }
+                }
+                
+                Section("Статистика") {
+                    HStack {
+                        Image(systemName: "checkmark.circle")
+                            .frame(width: 30)
+                        Text("Выполнено задач: \(user.completedTasks)")
+                    }
+                }
+                
+                Section {
+                    Button("Редактировать профиль") {
+                        showingEdit = true
+                    }
+                    Button("Выйти", role: .destructive) {
+                        UserDefaults.standard.removeObject(forKey: "currentUser")
+                        currentUser = nil
+                    }
+                }
+            }
+            .navigationTitle("Профиль")
+            .sheet(isPresented: $showingEdit) {
+                EditProfileView(user: $currentUser)
+            }
+        }
+    }
+}
+
+struct EditProfileView: View {
+    @Binding var user: User?
+    @Environment(\.dismiss) var dismiss
+    
+    @State private var name: String
+    @State private var phone: String
+    
+    init(user: Binding<User?>) {
+        self._user = user
+        self._name = State(initialValue: user.wrappedValue?.name ?? "")
+        self._phone = State(initialValue: user.wrappedValue?.phone ?? "")
+    }
+    
+    var body: some View {
+        NavigationView {
+            Form {
+                Section {
+                    TextField("Имя", text: $name)
+                    TextField("Телефон", text: $phone)
+                        .keyboardType(.phonePad)
+                }
+                
+                Section {
+                    Button("Сохранить") {
+                        if var current = user {
+                            current.name = name
+                            current.phone = phone
+                            user = current
+                            saveUser(current)
+                            dismiss()
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Редактирование")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+    }
+    
+    private func saveUser(_ user: User) {
+        if let encoded = try? JSONEncoder().encode(user) {
+            UserDefaults.standard.set(encoded, forKey: "currentUser")
+        }
+    }
+}
+
+// Остальные компоненты (без изменений)
 struct RoleSelectionView: View {
     let primaryColor: Color
     @Binding var selectedRole: Role?
@@ -214,7 +403,6 @@ struct RoleSelectionView: View {
     }
 }
 
-// Кнопка выбора роли
 struct RoleButton: View {
     let role: Role
     let title: String
@@ -246,7 +434,6 @@ struct RoleButton: View {
     }
 }
 
-// Строка задачи
 struct TaskRow: View {
     let task: Task
     let primaryColor: Color
@@ -260,7 +447,7 @@ struct TaskRow: View {
                 
                 Spacer()
                 
-                Text("\(task.numericPrice) ₽")
+                Text(task.price)
                     .font(.subheadline)
                     .foregroundColor(primaryColor)
             }
@@ -292,7 +479,6 @@ struct TaskRow: View {
     }
 }
 
-// Экран создания новой задачи
 struct NewTaskView: View {
     let role: Role
     @Binding var isPresented: Bool
@@ -311,7 +497,7 @@ struct NewTaskView: View {
                 Section {
                     TextField(role == .customer ? "Какая работа нужна?" : "Какую работу предлагаете?", text: $title)
                     TextField("Подробное описание", text: $description)
-                    TextField("Бюджет (только цифры)", text: $price)
+                    TextField("Бюджет", text: $price)
                         .keyboardType(.numberPad)
                     TextField("Контактный телефон", text: $phone)
                         .keyboardType(.phonePad)
@@ -346,7 +532,7 @@ struct NewTaskView: View {
             role: role,
             title: title,
             description: description,
-            price: "\(price) ₽",
+            price: price + " ₽",
             phone: phone,
             date: Date()
         )
@@ -362,7 +548,6 @@ struct NewTaskView: View {
     }
 }
 
-// Экран фильтров
 struct FiltersView: View {
     @Binding var filters: TaskFilters
     let primaryColor: Color
@@ -403,7 +588,6 @@ struct ContentView_Previews: PreviewProvider {
     }
 }
 
-// Точка входа приложения
 @main
 struct HomeGnomeApp: App {
     var body: some Scene {
