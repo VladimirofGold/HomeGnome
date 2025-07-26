@@ -13,8 +13,11 @@ struct Task: Identifiable, Codable {
     let title: String
     let description: String
     let price: String
-    let phone: String
     let date: Date
+    let authorName: String
+    let authorPhone: String
+    var isCompleted: Bool = false
+    var completedBy: UUID?
     
     var numericPrice: Int {
         Int(price.filter { $0.isNumber }) ?? 0
@@ -29,10 +32,10 @@ enum Role: String, Codable, CaseIterable {
 struct User: Codable {
     var id = UUID()
     var name: String
-    var email: String
     var phone: String
-    var role: Role
+    var password: String
     var completedTasks: Int = 0
+    var completedTasksIDs: [UUID] = []
 }
 
 struct TaskFilters {
@@ -44,41 +47,19 @@ struct TaskFilters {
 
 // Главный View
 struct ContentView: View {
-    // Состояние приложения
     @State private var tasks: [Task] = []
     @State private var showTaskCreation = false
     @State private var showingFilters = false
     @State private var filters = TaskFilters()
     @State private var currentUser: User?
     @State private var showingAuth = false
-    @State private var showRoleSelection = true
-    @State private var selectedRole: Role?
     
-    // Цвета
     private let primaryColor = Color(red: 74/255, green: 120/255, blue: 101/255)
     private let backgroundColor = Color(red: 245/255, green: 245/255, blue: 245/255)
     
     init() {
-        // Загрузка пользователя
-        if let userData = UserDefaults.standard.data(forKey: "currentUser") {
-            currentUser = try? JSONDecoder().decode(User.self, from: userData)
-        }
-        
-        // Загрузка задач
-        if let tasksData = UserDefaults.standard.data(forKey: "tasks") {
-            tasks = (try? JSONDecoder().decode([Task].self, from: tasksData)) ?? []
-        }
-        
-        // Настройка NavigationBar
-        let appearance = UINavigationBarAppearance()
-        appearance.configureWithOpaqueBackground()
-        appearance.backgroundColor = UIColor(primaryColor)
-        appearance.titleTextAttributes = [.foregroundColor: UIColor.white]
-        appearance.largeTitleTextAttributes = [.foregroundColor: UIColor.white]
-        
-        UINavigationBar.appearance().standardAppearance = appearance
-        UINavigationBar.appearance().scrollEdgeAppearance = appearance
-        UINavigationBar.appearance().tintColor = .white
+        loadData()
+        setupNavigationBar()
     }
     
     var body: some View {
@@ -90,98 +71,144 @@ struct ContentView: View {
                     ZStack {
                         backgroundColor.edgesIgnoringSafeArea(.all)
                         
-                        if showRoleSelection {
-                            RoleSelectionView(primaryColor: primaryColor, selectedRole: $selectedRole) {
-                                withAnimation {
-                                    showRoleSelection = false
-                                }
-                            }
-                        } else {
-                            VStack {
-                                // Кнопка профиля
-                                HStack {
-                                    Spacer()
-                                    Button(action: { showingAuth = true }) {
-                                        Image(systemName: "person.circle")
-                                            .font(.title)
-                                            .foregroundColor(primaryColor)
-                                    }
-                                    .padding(.trailing)
-                                }
-                                
-                                // Кнопка фильтров
-                                HStack {
-                                    Spacer()
-                                    Button(action: { showingFilters = true }) {
-                                        Image(systemName: "slider.horizontal.3")
-                                            .foregroundColor(primaryColor)
-                                    }
-                                    .padding(.trailing)
-                                }
-                                
-                                // Список задач
-                                ScrollView {
-                                    VStack(spacing: 16) {
-                                        if tasks.isEmpty {
-                                            Text("Нет объявлений")
-                                                .foregroundColor(.gray)
-                                                .padding()
-                                        } else {
-                                            ForEach(tasks) { task in
-                                                TaskRow(task: task, primaryColor: primaryColor)
-                                            }
-                                        }
-                                    }
-                                    .padding()
-                                }
-                            }
+                        VStack(spacing: 16) {
+                            // Кнопка профиля
+                            profileButton
+                            
+                            // Кнопка фильтров
+                            filtersButton
+                            
+                            // Список задач
+                            tasksList
                         }
                     }
-                    .navigationTitle(selectedRole == nil ? "HomeGnome" : selectedRole!.rawValue)
+                    .navigationTitle("HomeGnome")
                     .navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        ToolbarItem(placement: .navigationBarTrailing) {
-                            if selectedRole != nil {
-                                Button(action: {
-                                    showTaskCreation = true
-                                }) {
-                                    Image(systemName: "plus")
-                                        .foregroundColor(.white)
-                                }
-                            }
-                        }
-                        ToolbarItem(placement: .navigationBarLeading) {
-                            if selectedRole != nil {
-                                Button("Сменить роль") {
-                                    showRoleSelection = true
-                                }
-                                .foregroundColor(.white)
-                            }
-                        }
-                    }
-                    .sheet(isPresented: $showTaskCreation) {
-                        if let role = selectedRole {
-                            NewTaskView(
-                                role: role,
-                                isPresented: $showTaskCreation,
-                                tasks: $tasks,
-                                primaryColor: primaryColor,
-                                onAddTask: saveTasks
-                            )
-                        }
-                    }
-                    .sheet(isPresented: $showingFilters) {
-                        FiltersView(filters: $filters, primaryColor: primaryColor)
-                    }
-                    .sheet(isPresented: $showingAuth) {
-                        if let user = currentUser {
-                            ProfileView(currentUser: $currentUser, user: user)
-                        }
-                    }
+                    .toolbar { plusButtonToolbarItem }
+                    .sheet(isPresented: $showTaskCreation) { newTaskSheet }
+                    .sheet(isPresented: $showingFilters) { filtersSheet }
+                    .sheet(isPresented: $showingAuth) { profileSheet }
                 }
                 .accentColor(.white)
             }
         }
+    }
+    
+    // MARK: - Subviews
+    private var profileButton: some View {
+        HStack {
+            Spacer()
+            Button(action: { showingAuth = true }) {
+                Image(systemName: "person.circle")
+                    .font(.title)
+                    .foregroundColor(primaryColor)
+                    .padding(.top, 8)
+            }
+            .padding(.trailing, 20)
+        }
+    }
+    
+    private var filtersButton: some View {
+        HStack {
+            Spacer()
+            Button(action: { showingFilters = true }) {
+                HStack {
+                    Image(systemName: "slider.horizontal.3")
+                    Text("Фильтры")
+                }
+                .foregroundColor(primaryColor)
+                .padding(.vertical, 8)
+                .padding(.horizontal, 12)
+                .background(Color.white)
+                .cornerRadius(8)
+                .shadow(color: Color.black.opacity(0.05), radius: 2, x: 0, y: 2)
+            }
+            .padding(.trailing, 20)
+        }
+    }
+    
+    private var tasksList: some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                if tasks.isEmpty {
+                    Text("Нет объявлений")
+                        .foregroundColor(.gray)
+                        .padding(.top, 40)
+                } else {
+                    ForEach($tasks) { $task in
+                        TaskRow(task: task,
+                               primaryColor: primaryColor,
+                               currentUser: $currentUser,
+                               onComplete: {
+                            completeTask(task: &task)
+                        })
+                        .padding(.horizontal, 16)
+                    }
+                }
+            }
+            .padding(.top, 8)
+        }
+    }
+    
+    private var plusButtonToolbarItem: some ToolbarContent {
+        ToolbarItem(placement: .navigationBarTrailing) {
+            Button(action: { showTaskCreation = true }) {
+                Image(systemName: "plus")
+                    .foregroundColor(.white)
+            }
+        }
+    }
+    
+    private var newTaskSheet: some View {
+        Group {
+            if let user = currentUser {
+                NewTaskView(
+                    isPresented: $showTaskCreation,
+                    tasks: $tasks,
+                    primaryColor: primaryColor,
+                    authorName: user.name,
+                    authorPhone: user.phone,
+                    onAddTask: saveTasks
+                )
+            }
+        }
+    }
+    
+    private var filtersSheet: some View {
+        FiltersView(filters: $filters,
+                   primaryColor: primaryColor,
+                   isPresented: $showingFilters)
+    }
+    
+    private var profileSheet: some View {
+        Group {
+            if let user = currentUser {
+                ProfileView(currentUser: $currentUser, user: user)
+            }
+        }
+    }
+    
+    // MARK: - Methods
+    private func loadData() {
+        if let userData = UserDefaults.standard.data(forKey: "currentUser") {
+            currentUser = try? JSONDecoder().decode(User.self, from: userData)
+        }
+        
+        if let tasksData = UserDefaults.standard.data(forKey: "tasks") {
+            tasks = (try? JSONDecoder().decode([Task].self, from: tasksData)) ?? []
+        }
+    }
+    
+    private func setupNavigationBar() {
+        let appearance = UINavigationBarAppearance()
+        appearance.configureWithOpaqueBackground()
+        appearance.backgroundColor = UIColor(primaryColor)
+        appearance.titleTextAttributes = [.foregroundColor: UIColor.white]
+        appearance.largeTitleTextAttributes = [.foregroundColor: UIColor.white]
+        
+        UINavigationBar.appearance().standardAppearance = appearance
+        UINavigationBar.appearance().scrollEdgeAppearance = appearance
+        UINavigationBar.appearance().tintColor = .white
     }
     
     private func saveTasks() {
@@ -189,69 +216,20 @@ struct ContentView: View {
             UserDefaults.standard.set(encoded, forKey: "tasks")
         }
     }
-}
-
-// Компоненты аутентификации
-struct AuthView: View {
-    @Binding var currentUser: User?
-    @State private var isLoginMode = true
-    @State private var name = ""
-    @State private var email = ""
-    @State private var phone = ""
-    @State private var password = ""
-    @State private var selectedRole: Role = .customer
     
-    var body: some View {
-        NavigationView {
-            Form {
-                if !isLoginMode {
-                    Section {
-                        TextField("Имя", text: $name)
-                        TextField("Телефон", text: $phone)
-                            .keyboardType(.phonePad)
-                        Picker("Роль", selection: $selectedRole) {
-                            ForEach(Role.allCases, id: \.self) { role in
-                                Text(role.rawValue).tag(role)
-                            }
-                        }
-                    }
-                }
-                
-                Section {
-                    TextField("Email", text: $email)
-                        .keyboardType(.emailAddress)
-                        .autocapitalization(.none)
-                    SecureField("Пароль", text: $password)
-                }
-                
-                Section {
-                    Button(isLoginMode ? "Войти" : "Зарегистрироваться") {
-                        let user = User(
-                            name: name,
-                            email: email,
-                            phone: phone,
-                            role: selectedRole
-                        )
-                        saveUser(user)
-                        currentUser = user
-                    }
-                    .disabled(!isFormValid)
-                    
-                    Button(isLoginMode ? "Создать аккаунт" : "Уже есть аккаунт? Войти") {
-                        isLoginMode.toggle()
-                    }
-                }
-            }
-            .navigationTitle(isLoginMode ? "Вход" : "Регистрация")
-        }
-    }
-    
-    private var isFormValid: Bool {
-        if isLoginMode {
-            return !email.isEmpty && !password.isEmpty
-        } else {
-            return !name.isEmpty && !email.isEmpty && !password.isEmpty && !phone.isEmpty
-        }
+    private func completeTask(task: inout Task) {
+        guard var user = currentUser,
+              !user.completedTasksIDs.contains(task.id) else { return }
+        
+        task.isCompleted = true
+        task.completedBy = user.id
+        user.completedTasks += 1
+        user.completedTasksIDs.append(task.id)
+        currentUser = user
+        
+        // Сохраняем изменения
+        saveUser(user)
+        saveTasks()
     }
     
     private func saveUser(_ user: User) {
@@ -261,40 +239,104 @@ struct AuthView: View {
     }
 }
 
+// Компоненты аутентификации
+struct AuthView: View {
+    @Binding var currentUser: User?
+    @State private var isLoginMode = true
+    @State private var name = ""
+    @State private var phone = ""
+    @State private var password = ""
+    
+    var body: some View {
+        NavigationView {
+            Form {
+                if !isLoginMode {
+                    Section(header: Text("Ваши данные")) {
+                        TextField("Имя", text: $name)
+                            .textContentType(.name)
+                        TextField("Телефон", text: $phone)
+                            .keyboardType(.phonePad)
+                            .textContentType(.telephoneNumber)
+                        SecureField("Пароль", text: $password)
+                    }
+                } else {
+                    Section {
+                        TextField("Телефон", text: $phone)
+                            .keyboardType(.phonePad)
+                        SecureField("Пароль", text: $password)
+                    }
+                }
+                
+                Section {
+                    Button(isLoginMode ? "Войти" : "Зарегистрироваться") {
+                        handleAuth()
+                    }
+                    .disabled(!isFormValid)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                    
+                    Button(isLoginMode ? "Нет аккаунта? Зарегистрируйтесь" : "Уже есть аккаунт? Войти") {
+                        isLoginMode.toggle()
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+            }
+            .navigationTitle(isLoginMode ? "Вход" : "Регистрация")
+        }
+    }
+    
+    private var isFormValid: Bool {
+        if isLoginMode {
+            return !phone.isEmpty && !password.isEmpty
+        } else {
+            return !name.isEmpty && !phone.isEmpty && !password.isEmpty
+        }
+    }
+    
+    private func handleAuth() {
+        let user = User(
+            name: name,
+            phone: phone,
+            password: password
+        )
+        saveUser(user)
+        currentUser = user
+    }
+    
+    private func saveUser(_ user: User) {
+        if let encoded = try? JSONEncoder().encode(user) {
+            UserDefaults.standard.set(encoded, forKey: "currentUser")
+        }
+    }
+}
+
+// Личный кабинет
 struct ProfileView: View {
     @Binding var currentUser: User?
     let user: User
     @State private var showingEdit = false
     
+    private var primaryColor: Color {
+        Color(red: 74/255, green: 120/255, blue: 101/255)
+    }
+    
     var body: some View {
         NavigationView {
             List {
                 Section {
-                    HStack {
+                    HStack(spacing: 16) {
                         Image(systemName: "person.circle.fill")
                             .font(.system(size: 60))
-                            .foregroundColor(.gray)
+                            .foregroundColor(primaryColor)
                         
-                        VStack(alignment: .leading) {
+                        VStack(alignment: .leading, spacing: 4) {
                             Text(user.name)
                                 .font(.title2)
-                            Text(user.role.rawValue)
+                            Text(user.phone)
                                 .foregroundColor(.secondary)
                         }
                     }
-                }
-                
-                Section("Контакты") {
-                    HStack {
-                        Image(systemName: "envelope")
-                            .frame(width: 30)
-                        Text(user.email)
-                    }
-                    HStack {
-                        Image(systemName: "phone")
-                            .frame(width: 30)
-                        Text(user.phone)
-                    }
+                    .padding(.vertical, 8)
                 }
                 
                 Section("Статистика") {
@@ -303,12 +345,21 @@ struct ProfileView: View {
                             .frame(width: 30)
                         Text("Выполнено задач: \(user.completedTasks)")
                     }
+                    
+                    if user.completedTasks > 0 {
+                        HStack {
+                            Image(systemName: "star.fill")
+                                .frame(width: 30)
+                            Text("Уровень: \(calculateLevel())")
+                        }
+                    }
                 }
                 
                 Section {
                     Button("Редактировать профиль") {
                         showingEdit = true
                     }
+                    
                     Button("Выйти", role: .destructive) {
                         UserDefaults.standard.removeObject(forKey: "currentUser")
                         currentUser = nil
@@ -319,6 +370,16 @@ struct ProfileView: View {
             .sheet(isPresented: $showingEdit) {
                 EditProfileView(user: $currentUser)
             }
+        }
+    }
+    
+    private func calculateLevel() -> String {
+        switch user.completedTasks {
+        case 0: return "Новичок"
+        case 1..<5: return "Начинающий"
+        case 5..<10: return "Опытный"
+        case 10..<20: return "Профессионал"
+        default: return "Эксперт"
         }
     }
 }
@@ -355,6 +416,7 @@ struct EditProfileView: View {
                             dismiss()
                         }
                     }
+                    .frame(maxWidth: .infinity)
                 }
             }
             .navigationTitle("Редактирование")
@@ -369,77 +431,15 @@ struct EditProfileView: View {
     }
 }
 
-// Остальные компоненты (без изменений)
-struct RoleSelectionView: View {
-    let primaryColor: Color
-    @Binding var selectedRole: Role?
-    let onRoleSelected: () -> Void
-    
-    var body: some View {
-        VStack(spacing: 20) {
-            Text("Выберите роль")
-                .font(.title2)
-                .padding(.bottom, 30)
-            
-            RoleButton(
-                role: .customer,
-                title: "Я заказчик",
-                description: "Нужно выполнить работу",
-                primaryColor: primaryColor,
-                selectedRole: $selectedRole,
-                onRoleSelected: onRoleSelected
-            )
-            
-            RoleButton(
-                role: .performer,
-                title: "Я исполнитель",
-                description: "Могу выполнить работу",
-                primaryColor: primaryColor,
-                selectedRole: $selectedRole,
-                onRoleSelected: onRoleSelected
-            )
-        }
-        .padding()
-    }
-}
-
-struct RoleButton: View {
-    let role: Role
-    let title: String
-    let description: String
-    let primaryColor: Color
-    @Binding var selectedRole: Role?
-    let onRoleSelected: () -> Void
-    
-    var body: some View {
-        Button(action: {
-            selectedRole = role
-            onRoleSelected()
-        }) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(title)
-                    .font(.headline)
-                    .foregroundColor(primaryColor)
-                
-                Text(description)
-                    .font(.subheadline)
-                    .foregroundColor(.gray)
-            }
-            .padding()
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.white)
-            .cornerRadius(12)
-            .shadow(color: Color.black.opacity(0.05), radius: 4, x: 0, y: 2)
-        }
-    }
-}
-
+// Компонент задачи
 struct TaskRow: View {
     let task: Task
     let primaryColor: Color
+    @Binding var currentUser: User?
+    var onComplete: () -> Void
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text(task.title)
                     .font(.headline)
@@ -447,7 +447,7 @@ struct TaskRow: View {
                 
                 Spacer()
                 
-                Text(task.price)
+                Text("\(task.numericPrice) ₽")
                     .font(.subheadline)
                     .foregroundColor(primaryColor)
             }
@@ -456,69 +456,126 @@ struct TaskRow: View {
                 .font(.subheadline)
                 .foregroundColor(Color(red: 102/255, green: 102/255, blue: 102/255))
             
-            HStack {
-                Text("Тип: \(task.role.rawValue)")
-                    .font(.caption)
-                    .foregroundColor(task.role == .customer ? .blue : .green)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("Автор:")
+                        .font(.caption)
+                    Text(task.authorName)
+                        .font(.caption)
+                        .bold()
+                }
                 
-                Spacer()
+                HStack {
+                    Text("Тип:")
+                        .font(.caption)
+                    Text(task.role.rawValue)
+                        .font(.caption)
+                        .foregroundColor(task.role == .customer ? .blue : .green)
+                }
                 
-                Text("Телефон: \(task.phone)")
-                    .font(.caption)
+                HStack {
+                    Text("Телефон:")
+                        .font(.caption)
+                    Text(task.authorPhone)
+                        .font(.caption)
+                }
+                
+                Text("Добавлено: \(task.date.formatted(date: .numeric, time: .shortened))")
+                    .font(.caption2)
                     .foregroundColor(.gray)
             }
             
-            Text("Добавлено: \(task.date.formatted(date: .numeric, time: .shortened))")
-                .font(.caption)
-                .foregroundColor(.gray)
+            // Кнопка выполнения
+            if shouldShowCompleteButton {
+                completeTaskButton
+            }
+            
+            // Статус выполнения
+            if task.isCompleted {
+                Text("✅ Задача выполнена")
+                    .font(.caption)
+                    .foregroundColor(.green)
+            }
         }
-        .padding()
+        .padding(16)
         .background(Color.white)
         .cornerRadius(12)
         .shadow(color: Color.black.opacity(0.05), radius: 4, x: 0, y: 2)
     }
+    
+    private var shouldShowCompleteButton: Bool {
+        // Показываем кнопку если:
+        // 1. Это задача исполнителя И текущий пользователь - автор задачи
+        // 2. Задача еще не выполнена
+        // 3. Пользователь авторизован
+        guard currentUser != nil else { return false }
+        
+        return task.role == .performer &&
+               !task.isCompleted &&
+               currentUser?.phone == task.authorPhone
+    }
+    
+    private var completeTaskButton: some View {
+        Button(action: onComplete) {
+            Text("Отметить выполненным")
+                .font(.caption)
+                .foregroundColor(.white)
+                .padding(8)
+                .frame(maxWidth: .infinity)
+                .background(primaryColor)
+                .cornerRadius(8)
+        }
+    }
 }
 
+// Создание новой задачи
 struct NewTaskView: View {
-    let role: Role
     @Binding var isPresented: Bool
     @Binding var tasks: [Task]
     let primaryColor: Color
+    let authorName: String
+    let authorPhone: String
     let onAddTask: () -> Void
     
     @State private var title = ""
     @State private var description = ""
     @State private var price = ""
-    @State private var phone = ""
+    @State private var selectedRole: Role = .customer
     
     var body: some View {
         NavigationView {
             Form {
-                Section {
-                    TextField(role == .customer ? "Какая работа нужна?" : "Какую работу предлагаете?", text: $title)
+                Section("Тип объявления") {
+                    Picker("Роль", selection: $selectedRole) {
+                        ForEach(Role.allCases, id: \.self) { role in
+                            Text(role.rawValue).tag(role)
+                        }
+                    }
+                    .pickerStyle(SegmentedPickerStyle())
+                    .padding(.vertical, 8)
+                }
+                
+                Section("Детали") {
+                    TextField(selectedRole == .customer ? "Какая работа нужна?" : "Какую работу предлагаете?", text: $title)
                     TextField("Подробное описание", text: $description)
                     TextField("Бюджет", text: $price)
                         .keyboardType(.numberPad)
-                    TextField("Контактный телефон", text: $phone)
-                        .keyboardType(.phonePad)
                 }
                 
                 Section {
                     Button(action: addTask) {
-                        HStack {
-                            Spacer()
-                            Text("Добавить")
-                            Spacer()
-                        }
+                        Text("Опубликовать")
+                            .frame(maxWidth: .infinity)
                     }
-                    .disabled(title.isEmpty || price.isEmpty || phone.isEmpty)
+                    .disabled(title.isEmpty || price.isEmpty)
+                    .padding(.vertical, 8)
                 }
             }
             .navigationTitle("Новое объявление")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Готово") {
+                    Button("Отмена") {
                         isPresented = false
                     }
                 }
@@ -529,28 +586,25 @@ struct NewTaskView: View {
     
     private func addTask() {
         let newTask = Task(
-            role: role,
+            role: selectedRole,
             title: title,
             description: description,
             price: price + " ₽",
-            phone: phone,
-            date: Date()
+            date: Date(),
+            authorName: authorName,
+            authorPhone: authorPhone
         )
         tasks.append(newTask)
         onAddTask()
         isPresented = false
-        
-        // Сброс полей после добавления
-        title = ""
-        description = ""
-        price = ""
-        phone = ""
     }
 }
 
+// Фильтры
 struct FiltersView: View {
     @Binding var filters: TaskFilters
     let primaryColor: Color
+    @Binding var isPresented: Bool
     
     var body: some View {
         NavigationView {
@@ -561,30 +615,35 @@ struct FiltersView: View {
                 }
                 
                 Section(header: Text("Цена (₽)")) {
-                    TextField("Минимальная цена", text: $filters.minPrice)
+                    TextField("От", text: $filters.minPrice)
                         .keyboardType(.numberPad)
-                    TextField("Максимальная цена", text: $filters.maxPrice)
+                    TextField("До", text: $filters.maxPrice)
                         .keyboardType(.numberPad)
+                }
+                
+                Section {
+                    Button("Сбросить фильтры") {
+                        filters = TaskFilters()
+                    }
+                    .foregroundColor(.red)
                 }
             }
             .navigationTitle("Фильтры")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Сбросить") {
+                        filters = TaskFilters()
+                    }
+                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Готово") {
-                        // Закрываем окно
+                        isPresented = false
                     }
                 }
             }
         }
         .accentColor(primaryColor)
-    }
-}
-
-// Предварительный просмотр
-struct ContentView_Previews: PreviewProvider {
-    static var previews: some View {
-        ContentView()
     }
 }
 
